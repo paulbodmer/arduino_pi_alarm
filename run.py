@@ -31,7 +31,7 @@ class arduinoComms(object):
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
     logger.addHandler(fh)
-    
+
     # set the correct serial port for the OS
     if sys.platform.startswith('linux'):
         ser = serial.Serial(
@@ -48,7 +48,7 @@ class arduinoComms(object):
 
     def __init__(self, argv):
         """ init function : starts the loop to poll the serial interface """
-        
+
         self.alarm = alarm(self.logger)
         self.userInput = userInput(self.logger)
         self.manageArgs(argv)
@@ -56,6 +56,10 @@ class arduinoComms(object):
         self.ser.isOpen()
         while 1:
             data = self.getSerialData()
+            # give the cpu some time to let other processes run
+            # otherwise we hog the cpu for 100%
+            # the arduino only sends at maximum every 25ms anyway so we should not miss any data
+            time.sleep(0.025) 
 
     def manageConfig(self, config_file):
         """ reads the configuration from the file and gets all the sensors """
@@ -82,7 +86,7 @@ class arduinoComms(object):
             data += self.ser.readline()
             data = data.rstrip('\n\r')
 
-        if (data != "") and (len(data) == len(self.sensors.sections())+2) and data.startswith('s') and data.endswith('e'):
+        if (len(data) >= len(self.sensors.sections())+2) and data.startswith('s') and data.endswith('e'):
             data = data[data.find('s')+1:data.find('e')]
             # send the sensors and the serial data to the alarm manager
             self.alarm.checkState(self.sensors, data)
@@ -102,12 +106,12 @@ class alarm(object):
     TRIGGERED = 'TRIGGERED'
     # initial alarm state
     alarmState = STARTUP
-        
+
     def __init__(self, logger):
        self.logger = logger
        self.logger.info('Alarm starting up')
        self.logger.info('Alarm state: %s' %self.alarmState)
- 
+
     def checkState(self, sensors, data):
         """ checks the alarm state and decides whether or not to sound the siren """
         # if the alarm is in startup state then loop throught the sensors and assign their states
@@ -116,7 +120,7 @@ class alarm(object):
                 sensors.set(sensor, 'state', str(data[i]))  # initialise the states of the sensors
                 sensors.set(sensor, 'triggered', '0')       # set sensor triggered values to 0
             self.alarmState = self.DISARMED
-            self.logger.info('Sensor states initiallised')
+            self.logger.info('Sensor states initialised')
             self.logger.info('Alarm state : %s' %'DISARMED')
         # if the alarm is not in startup state then check if any sensors have changed
         # and update the state accordingly
@@ -128,9 +132,9 @@ class alarm(object):
                         sensors.set(sensor, 'triggered', '1')
                         print sensors.get(sensor, 'name') + sensors.get(sensor, 'state')
                         self.logger.info(sensors.get(sensor, 'name') + ' ' + sensors.get(sensor, 'state'))
-                        if self.alarmState == self.ARMED:              
+                        if self.alarmState == self.ARMED:
                             self.setAlarmState(self.TRIGGERED)                     # change alarm state to triggered
-                        elif self.alarmState == self.STAY:               
+                        elif self.alarmState == self.STAY:
                             if sensors.get(sensor, 'stay') == 'true':  # check config if sensor should be active during stay mode
                                self.setAlarmState(self.TRIGGERED)                         # change alarm state to triggered
             for i, sensor in enumerate(sensors.sections()):
@@ -157,13 +161,20 @@ class alarm(object):
         self.alarmState = state
         self.logger.info('Alarm state : %s' %self.alarmState)
         if self.alarmState == self.DISARMED:
-            GPIO.output(SIREN_PIN, True)
+            self.pulseSiren(0.05, 1)
         elif self.alarmState == self.STAY:
-            GPIO.output(SIREN_PIN, True)
+            self.pulseSiren(0.05, 3)
         elif self.alarmState == self.ARMED:
-            GPIO.output(SIREN_PIN, True)
+            self.pulseSiren(0.05, 2)
         elif self.alarmState == self.TRIGGERED:
             GPIO.output(SIREN_PIN, False)
+
+    def pulseSiren(self, delay=0.1, repeat=1):
+        for i in range(repeat):
+            GPIO.output(SIREN_PIN, False)
+            time.sleep(delay)
+            GPIO.output(SIREN_PIN, True)
+            time.sleep(3*delay)
 
 
 class userInput(object):
@@ -175,7 +186,7 @@ class userInput(object):
         self.gateDepressTime = 0
         self.logger = logger
         self.logger.info('Home automation starting up')
-    
+
     def checkState(self, sensors, data, alarm):
         for i, sensor in enumerate(sensors.sections()):
             if int(sensors.get(sensor, 'state')) != int(data[i]):
